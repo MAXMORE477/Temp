@@ -4,7 +4,7 @@ from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 import os
 import pandas as pd
-from urllib.parse import urlencode, quote
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 # Load environment variables from .env
@@ -12,8 +12,9 @@ load_dotenv()
 API_KEY = os.getenv("API_KEY")
 
 # Config
-DATA_DIR = "data"          # Folder containing .xlsx files
-PER_PAGE = 25              # Fixed number of rows per page
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+PER_PAGE = 25  # Fixed number of rows per page
 
 app = Flask(__name__)
 limiter = Limiter(get_remote_address, app=app, default_limits=["100 per hour"])
@@ -28,7 +29,7 @@ def require_api_key():
 @app.route("/files")
 def list_files():
     require_api_key()
-    files = [f for f in os.listdir(DATA_DIR) if f.endswith(".xlsx")]
+    files = [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".xlsx") and not f.startswith("~$")]
     return jsonify({"files": files})
 
 # 📄 List sheet names from a file
@@ -61,15 +62,30 @@ def get_sheet_data(filename, sheet_name):
         return jsonify({"error": "Invalid page value"}), 400
 
     try:
-        df = pd.read_excel(filepath, sheet_name=sheet_name)
+        # Load only first column to get total rows (lightweight)
+        total_df = pd.read_excel(filepath, sheet_name=sheet_name, usecols=[0], engine='openpyxl')
+        total_rows = len(total_df)
+
+        # Calculate which rows to read
+        start = (page - 1) * PER_PAGE
+        skip = range(1, start + 1)  # Skip header + previous rows
+
+        # Read only the required page of data
+        df = pd.read_excel(
+            filepath,
+            sheet_name=sheet_name,
+            skiprows=skip,
+            nrows=PER_PAGE,
+            engine='openpyxl'
+        )
+
+        # Restore headers
+        df.columns = pd.read_excel(filepath, sheet_name=sheet_name, nrows=0, engine='openpyxl').columns
         data = df.to_dict(orient="records")
     except Exception as e:
         return jsonify({"error": f"Could not load sheet: {str(e)}"}), 500
 
-    start = (page - 1) * PER_PAGE
-    end = start + PER_PAGE
-    paginated = data[start:end]
-    has_more = end < len(data)
+    has_more = (start + PER_PAGE) < total_rows
 
     # Build next page URL if there are more records
     next_page_url = None
@@ -83,10 +99,10 @@ def get_sheet_data(filename, sheet_name):
         "sheet": sheet_name,
         "page": page,
         "per_page": PER_PAGE,
-        "total_rows": len(data),
+        "total_rows": total_rows,
         "has_more": has_more,
         "next_page": next_page_url,
-        "data": paginated
+        "data": data
     })
 
 # 🔐 Error handlers
