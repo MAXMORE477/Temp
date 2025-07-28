@@ -13,7 +13,7 @@ API_KEY = os.getenv("API_KEY")
 # Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-PER_PAGE = 100
+PER_PAGE = 1000
 
 app = Flask(__name__)
 limiter = Limiter(get_remote_address, app=app, default_limits=["100 per hour"])
